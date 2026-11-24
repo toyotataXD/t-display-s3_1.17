@@ -30,9 +30,9 @@ static DeviceTouch touchCfg() {
     cfg.pin_rst = 21;
     cfg.cst8xx_model = 1; // CST816/CST820/CST716
     // rotation:        0      1      2      3
-    const bool swapXY[4] = {false, true, false, true};
-    const bool mirrorX[4] = {true, false, false, true};
-    const bool mirrorY[4] = {false, true, true, false};
+    const bool swapXY = {false, true, false, true};
+    const bool mirrorX = {true, false, false, true};
+    const bool mirrorY = {false, true, true, false};
     for (int i = 0; i < 4; i++) {
         cfg.SwapXY[i] = swapXY[i];
         cfg.MirrorX[i] = mirrorX[i];
@@ -95,7 +95,6 @@ void _setup_gpio() {
     bruceConfigPins.badusb_bus = {(gpio_num_t)43, (gpio_num_t)44}; // rx, tx
 #endif
     bruceConfigPins.rotation = 3;
-
 #if defined(USE_SD_MMC)
     bruceConfigPins.SDCARD_bus = {(gpio_num_t)-1, (gpio_num_t)-1, (gpio_num_t)-1, (gpio_num_t)-1};
     bruceConfigPins.CC1101_bus = {
@@ -138,6 +137,9 @@ void _setup_gpio() {
 #ifdef USE_SD_MMC
     SD.setPins(PIN_SD_CLK, PIN_SD_CMD, PIN_SD_D0);
 #endif
+
+    // Release deep sleep hold on POWER pin before configuring it
+    gpio_hold_dis((gpio_num_t)PIN_POWER_ON);
 
 #ifdef HAS_TOUCH
     gpio_hold_dis((gpio_num_t)21); // PIN_TOUCH_RES
@@ -200,11 +202,24 @@ void InputHandler(void) {
 
 void powerOff() {
 #ifdef T_DISPLAY_S3
-    tft.fillScreen(bruceConfig.bgColor);
-    digitalWrite(PIN_POWER_ON, LOW);
+    tft.fillScreen(TFT_BLACK);
+
+    // Turn off PWM backlight and drive pin LOW
+    hal_bright_set(TFT_BL, 0);
+    pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, LOW);
+
+    // Put ST7789 panel to sleep
     tft.writecommand(0x10);
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)SEL_BTN, BTN_ACT);
+    delay(50);
+
+    // Cut battery power rail (GPIO 15) and hold it LOW during deep sleep
+    digitalWrite(PIN_POWER_ON, LOW);
+    gpio_hold_en((gpio_num_t)PIN_POWER_ON);
+    gpio_deep_sleep_hold_en();
+
+    // Wake up with physical DW_BTN (GPIO 14) instead of floating SEL_BTN (GPIO 16)
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)DW_BTN, BTN_ACT);
     esp_deep_sleep_start();
 #endif
 }
